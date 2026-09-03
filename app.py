@@ -29,19 +29,34 @@ if st.button("🚀 开始调研", type="primary"):
     if not goal.strip():
         st.error("❌ 请输入调研目标")
     else:
-        # 【核心改动】用 st.status 实时显示进度
-        with st.status("🚀 正在调研，请稍候...", expanded=True) as status:
+        # ── 进度日志区（实时累加显示，不被覆盖）─────────────────
+        log_container = st.container()
+        log_placeholder = log_container.empty()
+        log_lines = []
+
+        def append_log(step_name, message):
+            """追加一行进度日志"""
+            tag_map = {
+                "规划": "🧠", "搜索": "🔍", "决策": "🤔",
+                "处理": "📖", "评分": "📊", "错误": "⚠️",
+                "总论": "✍️", "保存": "💾", "完成": "✅"
+            }
+            icon = tag_map.get(step_name, "▶️")
+            log_lines.append(f"**{icon} [{step_name}]** {message}")
+            log_placeholder.markdown("\n\n".join(log_lines))
+
+        # ── spinner 单独跑，表示程序在运行 ─────────────────────
+        with st.spinner("🚀 AI Agent 工作中，请稍候..."):
             result = None
             for step_name, message in run_workflow(goal):
                 if step_name == "_RESULT_":
-                    result = message  # ← 拿到 state
+                    result = message  # ← 拿到最终 state
                 else:
-                    status.update(label=message)
-                    st.write(f"**[{step_name}]** {message}")  # 每步写进状态栏日志
+                    append_log(step_name, message)
 
-        # 显示报告
+        # ── 显示报告 ─────────────────────────────────────────
         if result and result.get("report"):
-            st.success(f"✅ 完成！报告已保存")
+            st.success(f"✅ 完成！报告已保存至 {os.path.basename(result.get('report_path', ''))}")
 
             # 在网页上展示报告
             st.markdown("---")
