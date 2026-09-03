@@ -1,0 +1,7 @@
+# 不让密钥和生成文件进仓库（防止泄露）
+config.py
+output/
+__pycache__/
+*.pyc
+.idea/
+.DS_Store
