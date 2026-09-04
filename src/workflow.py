@@ -1,6 +1,8 @@
 import sys
 import os
 import requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from config_loader import load_keys
 TAVILY_API_KEY, DEEPSEEK_API_KEY = load_keys()
@@ -29,8 +31,7 @@ def summarize_with_llm(text: str, max_length: int = 200) -> str:
 
 def run_workflow(goal: str):
     """
-    主工作流：规划 → 搜索+决策循环 → 抓正文 → 总结 → 总论 → 写报告
-    改成生成器函数，每次 yield 一个进度状态
+    主工作流：规划 → 搜索+决策循环 → 并发处理文章 → 总论 → 写报告
     """
     state = create_initial_state(goal)
 
@@ -41,8 +42,8 @@ def run_workflow(goal: str):
     # ② 搜索 + LLM 决策循环
     all_articles = []
     max_rounds = 5
-
     next_keywords = None
+
     for round_num in range(max_rounds):
         if round_num == 0:
             search_keywords = keywords
@@ -57,7 +58,7 @@ def run_workflow(goal: str):
             results = web_search(kw, max_results=2)
             all_articles.extend(results)
 
-        # 去重：按 URL
+        # 按 URL 去重
         seen_urls = set()
         unique_articles = []
         for a in all_articles:
@@ -80,32 +81,41 @@ def run_workflow(goal: str):
             yield ("决策", f"LLM 判断：不够，补充搜索 {len(next_keywords)} 个关键词：{next_keywords}")
             search_keywords = next_keywords
 
-    # ③ 循环处理每篇
+    # ════════════════════ ③ 并发处理（核心改动） ════════════════════
+
+    def process_article(article: dict) -> dict:
+        """处理单篇文章：抓取 + 总结 + 评分，结果打成一个字典"""
+        full_text = fetch_page(article["url"])
+        summary = summarize_with_llm(full_text[:3000])
+        score = score_relevance(goal, article, summary)
+        return {
+            "title": article["title"],
+            "url": article["url"],
+            "summary": summary,
+            "score": score,
+        }
+
+    yield ("处理", f"开始并发处理 {len(state['articles'])} 篇文章（最多 5 个同时）...")
+
     summaries = []
-    total = len(state["articles"])
-    for idx, article in enumerate(state["articles"], 1):
-        yield ("处理", f"正在处理第 {idx}/{total} 篇：{article['title']}")
-        try:
-            full_text = fetch_page(article["url"])
-            summary = summarize_with_llm(full_text[:3000])
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        futures = {executor.submit(process_article, a): a for a in state["articles"]}
 
-            # LLM 评估文章相关度
-            score = score_relevance(goal, article, summary)
-            yield ("评分", f"相关度 {score} 分")
-            if score < 6:
-                yield ("评分", f"跳过低相关度文章（{score} 分）：{article['title']}")
-                state["errors"].append(f"低相关度跳过({score}): {article['title']}")
-                continue
+        for future in as_completed(futures):
+            article = futures[future]
+            try:
+                result = future.result()
+                yield ("评分", f"相关度 {result['score']} 分：{result['title']}")
+                if result["score"] < 6:
+                    yield ("评分", f"跳过低相关度文章（{result['score']} 分）")
+                    state["errors"].append(f"低相关度跳过: {result['title']}")
+                else:
+                    summaries.append(result)
+            except Exception as e:
+                yield ("错误", f"处理失败：{article['title']}，已跳过")
+                state["errors"].append(f"{article['title']}: {e}")
 
-            summaries.append({
-                "title": article["title"],
-                "url": article["url"],
-                "summary": summary,
-                "score": score,
-            })
-        except Exception as e:
-            yield ("错误", f"处理失败：{article['title']}，已跳过")
-            state["errors"].append(f"{article['title']}: {e}")
+    # ════════════════════════════════════════════════════════════════
 
     # ④ 生成总论
     yield ("总论", "正在生成总论...")
@@ -129,9 +139,9 @@ def run_workflow(goal: str):
     resp = requests.post(url, json=payload, headers=headers)
     overview = resp.json()["choices"][0]["message"]["content"]
 
-    # ⑤ 拼报告：总论 + 分隔线 + 逐篇详情
+    # ⑤ 拼报告
     report_lines = [f"# 调研报告：{goal}", ""]
-    report_lines.append("## 📋 总论")
+    report_lines.append("## 总论")
     report_lines.append("")
     report_lines.append(overview)
     report_lines.append("")
@@ -146,7 +156,7 @@ def run_workflow(goal: str):
 
     state["report"] = "\n".join(report_lines)
 
-    # 用绝对路径写文件
+    # 写文件（用绝对路径）
     src_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.dirname(src_dir)
     output_dir = os.path.join(project_root, "output")
@@ -155,7 +165,7 @@ def run_workflow(goal: str):
 
     yield ("保存", f"报告将保存到：{file_name}")
     state["report_path"] = write_file(state["report"], abs_file_path)
-    yield ("完成", f"✅ 完成！共处理 {len(summaries)} 篇文章")
+    yield ("完成", f"[OK] 完成！共处理 {len(summaries)} 篇文章")
 
     yield ("_RESULT_", state)
     return
