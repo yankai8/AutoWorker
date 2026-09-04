@@ -142,16 +142,4 @@ v0.1 骨架      v0.2 工具    v0.3 工作流   v0.4 规划器   v0.5 总论   
 口袋定义     三个工具     串起来跑      LLM想搜什么   LLM写综述    LLM决定搜几轮   网页可演示
 ```
 
----
 
-## 📝 简历项目描述（参考）
-
-> **AutoWorker · 多步骤 AI Agent 调研报告生成系统**
-> - 从零设计并实现一个能够自主规划的多步骤 AI Agent，输入目标后自动完成搜索→筛选→总结→生成报告的全流程
-> - 技术栈：Python · Streamlit · DeepSeek LLM · Tavily Search API · BeautifulSoup
-> - 核心亮点：
->   - LLM 主导的动态决策循环（规划关键词 → 判断是否继续搜索 → 补充关键词）
->   - 基于 LLM 评分的文章相关性过滤，保证报告内容质量
->   - 生成器模式（yield）实现实时进度推送，Web 界面逐行显示执行状态
->   - 手写实现状态管理与工具调用，深入理解 Agent 核心原理
-> - 已云端部署：https://autoworker-pd4noq928xbkq5esfipz2a.streamlit.app
